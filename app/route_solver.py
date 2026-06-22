@@ -2,10 +2,12 @@ import math
 
 MAX_REACH = 150  # pixels
 
+
 def distance(a, b):
     return math.sqrt((a["x"] - b["x"])**2 + (a["y"] - b["y"])**2)
 
-def build_graph(holds):
+
+def build_graph(holds, max_reach=MAX_REACH):
     graph = {i: [] for i in range(len(holds))}
 
     for i in range(len(holds)):
@@ -13,18 +15,22 @@ def build_graph(holds):
             if i == j:
                 continue
 
-            # Only allow upward movement
-            if holds[j]["y"] < holds[i]["y"]:
+            # Image coordinates grow downward, so upward movement goes to smaller y.
+            if holds[j]["y"] >= holds[i]["y"]:
                 continue
 
-            if distance(holds[i], holds[j]) < MAX_REACH:
+            if distance(holds[i], holds[j]) < max_reach:
                 graph[i].append(j)
 
     return graph
 
+
 def find_route(graph, holds):
-    start = min(range(len(holds)), key=lambda i: holds[i]["y"])
-    end = max(range(len(holds)), key=lambda i: holds[i]["y"])
+    if not holds:
+        return []
+
+    start = max(range(len(holds)), key=lambda i: holds[i]["y"])
+    end = min(range(len(holds)), key=lambda i: holds[i]["y"])
 
     visited = set()
 
@@ -42,4 +48,4 @@ def find_route(graph, holds):
 
         return None
 
-    return dfs(start, [start])
+    return dfs(start, [start]) or []

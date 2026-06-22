@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cruxly Manual Solver</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Arial, Helvetica, sans-serif;
+      background: #f5f7fa;
+      color: #18212f;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 20px;
+      border-bottom: 1px solid #d8dee8;
+      background: #ffffff;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      min-height: calc(100vh - 58px);
+    }
+
+    aside {
+      padding: 16px;
+      border-right: 1px solid #d8dee8;
+      background: #ffffff;
+    }
+
+    label {
+      display: block;
+      margin: 14px 0 6px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    input,
+    select,
+    button {
+      width: 100%;
+      min-height: 38px;
+      font: inherit;
+    }
+
+    input,
+    select {
+      border: 1px solid #b9c3d0;
+      border-radius: 6px;
+      padding: 8px 10px;
+      background: #ffffff;
+    }
+
+    button {
+      margin-top: 14px;
+      border: 0;
+      border-radius: 6px;
+      background: #175cd3;
+      color: #ffffff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button.secondary {
+      background: #44546a;
+    }
+
+    button:disabled {
+      background: #9aa7b7;
+      cursor: not-allowed;
+    }
+
+    .stage {
+      display: grid;
+      place-items: center;
+      overflow: auto;
+      padding: 20px;
+    }
+
+    .image-wrap {
+      position: relative;
+      max-width: 100%;
+      max-height: calc(100vh - 98px);
+      line-height: 0;
+    }
+
+    #wallImage {
+      display: block;
+      max-width: 100%;
+      max-height: calc(100vh - 98px);
+      object-fit: contain;
+      border: 1px solid #c8d1dd;
+      background: #e9edf3;
+    }
+
+    #overlay {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      cursor: crosshair;
+    }
+
+    .status {
+      margin-top: 14px;
+      min-height: 42px;
+      font-size: 13px;
+      line-height: 1.4;
+      color: #44546a;
+      white-space: pre-wrap;
+    }
+
+    .count {
+      margin-top: 14px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    @media (max-width: 800px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+
+      aside {
+        border-right: 0;
+        border-bottom: 1px solid #d8dee8;
+      }
+
+      .stage {
+        min-height: 55vh;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Cruxly Manual Solver</h1>
+  </header>
+  <main>
+    <aside>
+      <label for="imageInput">Image</label>
+      <input id="imageInput" type="file" accept="image/*">
+
+      <label for="holdColor">Color</label>
+      <input id="holdColor" type="text" placeholder="optional">
+
+      <label for="holdType">Type</label>
+      <select id="holdType">
+        <option value="">Optional</option>
+        <option value="start">Start</option>
+        <option value="hand">Hand</option>
+        <option value="foot">Foot</option>
+        <option value="finish">Finish</option>
+      </select>
+
+      <label for="maxReach">Max reach</label>
+      <input id="maxReach" type="number" min="1" value="450">
+
+      <button id="solveButton" disabled>Solve Manual Holds</button>
+      <button id="clearButton" class="secondary" disabled>Clear Holds</button>
+
+      <div class="count" id="holdCount">0 holds</div>
+      <div class="status" id="status">Load an image, then click holds.</div>
+    </aside>
+
+    <section class="stage">
+      <div class="image-wrap">
+        <img id="wallImage" alt="">
+        <canvas id="overlay"></canvas>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const imageInput = document.getElementById("imageInput");
+    const wallImage = document.getElementById("wallImage");
+    const overlay = document.getElementById("overlay");
+    const ctx = overlay.getContext("2d");
+    const solveButton = document.getElementById("solveButton");
+    const clearButton = document.getElementById("clearButton");
+    const holdCount = document.getElementById("holdCount");
+    const status = document.getElementById("status");
+    const holdColor = document.getElementById("holdColor");
+    const holdType = document.getElementById("holdType");
+    const maxReach = document.getElementById("maxReach");
+
+    let holds = [];
+    let route = [];
+    let nextId = 0;
+    let hasImage = false;
+
+    function resizeCanvas() {
+      const rect = wallImage.getBoundingClientRect();
+      overlay.width = Math.max(1, Math.round(rect.width));
+      overlay.height = Math.max(1, Math.round(rect.height));
+      draw();
+    }
+
+    function naturalToCanvas(point) {
+      return {
+        x: point.x * overlay.width / wallImage.naturalWidth,
+        y: point.y * overlay.height / wallImage.naturalHeight,
+      };
+    }
+
+    function canvasToNatural(x, y) {
+      return {
+        x: x * wallImage.naturalWidth / overlay.width,
+        y: y * wallImage.naturalHeight / overlay.height,
+      };
+    }
+
+    function updateControls() {
+      holdCount.textContent = `${holds.length} ${holds.length === 1 ? "hold" : "holds"}`;
+      solveButton.disabled = !hasImage || holds.length === 0;
+      clearButton.disabled = holds.length === 0;
+    }
+
+    function drawHold(hold, order) {
+      const point = naturalToCanvas(hold);
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 8, 0, Math.PI * 2);
+      ctx.fillStyle = order ? "#12b76a" : "#175cd3";
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#ffffff";
+      ctx.stroke();
+
+      if (order) {
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "700 12px Arial";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(String(order), point.x, point.y);
+      }
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+      if (route.length > 1) {
+        ctx.beginPath();
+        route.forEach((hold, index) => {
+          const point = naturalToCanvas(hold);
+          if (index === 0) {
+            ctx.moveTo(point.x, point.y);
+          } else {
+            ctx.lineTo(point.x, point.y);
+          }
+        });
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = "#f79009";
+        ctx.stroke();
+      }
+
+      const routeOrder = new Map(route.map((hold, index) => [hold.id, index + 1]));
+      holds.forEach((hold) => drawHold(hold, routeOrder.get(hold.id)));
+    }
+
+    function findClickedHold(point) {
+      const deleteRadius = 14 * wallImage.naturalWidth / overlay.width;
+      return holds.find((hold) => {
+        const dx = hold.x - point.x;
+        const dy = hold.y - point.y;
+        return Math.sqrt(dx * dx + dy * dy) <= deleteRadius;
+      });
+    }
+
+    imageInput.addEventListener("change", () => {
+      const file = imageInput.files[0];
+      if (!file) {
+        return;
+      }
+
+      holds = [];
+      route = [];
+      nextId = 0;
+      hasImage = false;
+      wallImage.src = URL.createObjectURL(file);
+      status.textContent = "Image loaded.";
+      updateControls();
+    });
+
+    wallImage.addEventListener("load", () => {
+      hasImage = true;
+      resizeCanvas();
+      updateControls();
+    });
+
+    overlay.addEventListener("click", (event) => {
+      if (!hasImage) {
+        return;
+      }
+
+      const rect = overlay.getBoundingClientRect();
+      const canvasX = event.clientX - rect.left;
+      const canvasY = event.clientY - rect.top;
+      const point = canvasToNatural(canvasX, canvasY);
+      const clickedHold = findClickedHold(point);
+
+      if (clickedHold) {
+        holds = holds.filter((hold) => hold.id !== clickedHold.id);
+        route = route.filter((hold) => hold.id !== clickedHold.id);
+      } else {
+        holds.push({
+          id: nextId++,
+          x: point.x,
+          y: point.y,
+          color: holdColor.value || null,
+          type: holdType.value || null,
+        });
+        route = [];
+      }
+
+      status.textContent = "Manual holds ready.";
+      updateControls();
+      draw();
+    });
+
+    solveButton.addEventListener("click", async () => {
+      solveButton.disabled = true;
+      status.textContent = "Solving...";
+
+      try {
+        const params = new URLSearchParams({ max_reach: maxReach.value || "450" });
+        const response = await fetch(`/solve_manual?${params.toString()}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ holds }),
+        });
+
+        if (!response.ok) {
+          throw new Error(await response.text());
+        }
+
+        const payload = await response.json();
+        holds = payload.holds;
+        route = payload.route;
+        const fallbackText = payload.debug.fallback_used
+          ? "\nNo connected route found; showing bottom-to-top order."
+          : "";
+        status.textContent = `Route length: ${payload.debug.route_length}\nMax reach: ${payload.debug.max_reach}${fallbackText}`;
+      } catch (error) {
+        status.textContent = `Solve failed: ${error.message}`;
+      } finally {
+        updateControls();
+        draw();
+      }
+    });
+
+    clearButton.addEventListener("click", () => {
+      holds = [];
+      route = [];
+      nextId = 0;
+      status.textContent = "Holds cleared.";
+      updateControls();
+      draw();
+    });
+
+    window.addEventListener("resize", resizeCanvas);
+    updateControls();
+  </script>
+</body>
+</html>
